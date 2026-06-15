@@ -58,39 +58,6 @@ function useReveal() {
   }, []);
 }
 
-//google form filling 
-const handleSubmit = async (e) => {
-  e.preventDefault();
-
-  const GOOGLE_FORM_ACTION_URL = "https://docs.google.com/forms/d/e/1FAIpQLSeu5d7QQ2TLgDqrTVJBJafzSddnChN0fGbynpXJepN9_EjXRQ/formResponse";
-
-  // 1. Extract the raw form element data
-  const data = new FormData(e.target);
-  
-  // 2. Convert FormData into URLSearchParams (e.g., entry.123=value&entry.456=value)
-  const searchParams = new URLSearchParams();
-  for (const [key, value] of data.entries()) {
-    searchParams.append(key, value);
-  }
-
-  try {
-    // 3. Post as a standard urlencoded request
-    await fetch(GOOGLE_FORM_ACTION_URL, {
-      method: "POST",
-      mode: "no-cors",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body: searchParams.toString()
-    });
-
-    setFormDone(true);
-  } catch (error) {
-    console.error("Form submission failed:", error);
-    alert("Something went wrong. Please try again!");
-  }
-};
-
 /* ─── Timer logic hook ─── */
 function useTimer() {
   const [tSec, setTSec] = useState(ROUND_SEC);
@@ -141,6 +108,10 @@ function useTimer() {
 
 export default function IronFistBoxing() {
   const punchLayerRef = useRef(null);
+  const bgMusicRef = useRef(null);
+  const punchSoundRef = useRef(null);
+
+  const [isMusicPlaying, setIsMusicPlaying] = useState(false);
   const [comboCount, setComboCount] = useState(0);
   const [comboOn, setComboOn] = useState(false);
   const [showHint, setShowHint] = useState(true);
@@ -150,23 +121,85 @@ export default function IronFistBoxing() {
   const timer = useTimer();
   useReveal();
 
+  // 1. Initialize Audio Assets on Component Mount
+  useEffect(() => {
+    bgMusicRef.current = new Audio('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
+    bgMusicRef.current.loop = true;
+    bgMusicRef.current.volume = 0.15;
+
+    punchSoundRef.current = new Audio('/audio/punch.mp3');
+    punchSoundRef.current.volume = 0.5;
+
+    // Attempts background soundtrack autoplay right out of the gate
+    bgMusicRef.current.play().then(() => {
+      setIsMusicPlaying(true);
+    }).catch(() => {
+      console.log("Autoplay context locked by browser; listening for initial click to un-pause.");
+    });
+
+    return () => {
+      if (bgMusicRef.current) bgMusicRef.current.pause();
+    };
+  }, []);
+
+  const triggerPunchSound = useCallback(() => {
+    if (punchSoundRef.current) {
+      punchSoundRef.current.currentTime = 0; // Rewinds playback instantly for rapid punching
+      punchSoundRef.current.play().catch(() => {});
+    }
+  }, []);
+
+  // 2. Clear browser autoplay flags on first viewport canvas interaction
+  useEffect(() => {
+    const handleFirstInteraction = () => {
+      if (bgMusicRef.current && bgMusicRef.current.paused) {
+        bgMusicRef.current.play()
+          .then(() => setIsMusicPlaying(true))
+          .catch((err) => console.log("Autoplay un-pause failed:", err));
+      }
+      document.removeEventListener('click', handleFirstInteraction);
+    };
+
+    document.addEventListener('click', handleFirstInteraction);
+    return () => document.removeEventListener('click', handleFirstInteraction);
+  }, []);
+
+  // Compact control HUD toggle
+  const toggleMusic = (e) => {
+    e.stopPropagation(); // Stops the interface container click from launching an unwanted text animation
+    triggerPunchSound(); // Sounds a punch confirm when clicked
+    
+    if (isMusicPlaying) {
+      bgMusicRef.current.pause();
+      setIsMusicPlaying(false);
+    } else {
+      bgMusicRef.current.play()
+        .then(() => setIsMusicPlaying(true))
+        .catch((err) => console.log("Playback failed:", err));
+    }
+  };
+
   const handleClick = useCallback((e) => {
     const skip = ['INPUT', 'BUTTON', 'SELECT', 'A', 'OPTION'];
     if (skip.includes(e.target.tagName)) return;
+
+    // ─── Trigger heavy impact punch audio strike ───
+    triggerPunchSound();
+
     if (punchLayerRef.current) spawnPunch(e.clientX, e.clientY, punchLayerRef.current);
     setComboCount(c => c + 1);
     setComboOn(true);
     setShowHint(false);
     clearTimeout(comboTimerRef.current);
     comboTimerRef.current = setTimeout(() => { setComboCount(0); setComboOn(false); }, 1600);
-  }, []);
+  }, [triggerPunchSound]);
 
   useEffect(() => {
     document.addEventListener('click', handleClick);
     return () => document.removeEventListener('click', handleClick);
   }, [handleClick]);
 
-  const handleSubmit = (e) => {
+  const handleFormSubmit = (e) => {
     e.preventDefault();
     setFormDone(true);
   };
@@ -209,6 +242,50 @@ export default function IronFistBoxing() {
       <div className="if-punch-layer" ref={punchLayerRef} aria-hidden="true" />
       {showHint && <div className="if-click-hint">✦ Click anywhere to punch ✦</div>}
 
+      {/* Compact Minimalist Audio Controller HUD */}
+      <div style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 9999 }}>
+        <button 
+          onClick={toggleMusic}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            padding: '8px 16px',
+            borderRadius: '12px',
+            fontWeight: '800',
+            textTransform: 'uppercase',
+            letterSpacing: '0.12em',
+            fontSize: '10px',
+            cursor: 'pointer',
+            transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+            backgroundColor: isMusicPlaying ? 'rgba(255, 215, 0, 0.12)' : 'rgba(15, 15, 17, 0.8)',
+            color: isMusicPlaying ? '#FFD700' : '#8a8a8f',
+            border: isMusicPlaying ? '1px solid rgba(255, 215, 0, 0.35)' : '1px solid rgba(255, 255, 255, 0.06)',
+            backdropFilter: 'blur(8px)',
+            boxShadow: isMusicPlaying 
+              ? '0 12px 24px -10px rgba(255, 215, 0, 0.25)' 
+              : '0 12px 24px -10px rgba(0,0,0,0.5)',
+            transform: 'scale(1)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px) scale(1.02)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0px) scale(1)';
+          }}
+        >
+          {/* Animated Audio Equalizer Micro-Bars */}
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '12px', width: '20px' }}>
+            <div className={`if-audio-bar ${isMusicPlaying ? 'playing' : ''}`} style={{ height: '12px', width: '2px', backgroundColor: isMusicPlaying ? '#FFD700' : '#444' }}></div>
+            <div className={`if-audio-bar ${isMusicPlaying ? 'playing' : ''}`} style={{ height: '12px', width: '2px', backgroundColor: isMusicPlaying ? '#FFD700' : '#444' }}></div>
+            <div className={`if-audio-bar ${isMusicPlaying ? 'playing' : ''}`} style={{ height: '12px', width: '2px', backgroundColor: isMusicPlaying ? '#FFD700' : '#444' }}></div>
+            <div className={`if-audio-bar ${isMusicPlaying ? 'playing' : ''}`} style={{ height: '12px', width: '2px', backgroundColor: isMusicPlaying ? '#FFD700' : '#444' }}></div>
+          </div>
+
+          <span>{isMusicPlaying ? 'TRACK ON' : 'MUTED'}</span>
+        </button>
+      </div>
+
       {/* Main Viewport Content Container */}
       <div className="if-page">
         <Navbar />
@@ -221,7 +298,7 @@ export default function IronFistBoxing() {
         <Coaches />
         <hr className="if-rope-div" />
         
-         <Gallery />
+        <Gallery />
         <hr className="if-rope-div" />
         
         <Schedule />
@@ -235,7 +312,7 @@ export default function IronFistBoxing() {
         
         <Contact 
           formDone={formDone} 
-          onSubmit={() => setFormDone(true)} 
+          onSubmit={handleFormSubmit} 
         />
         <Footer />
       </div>
